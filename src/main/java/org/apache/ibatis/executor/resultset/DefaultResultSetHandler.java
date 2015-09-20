@@ -416,7 +416,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       final List<String> unmappedColumnNames = rsw.getUnmappedColumnNames(resultMap, columnPrefix);
       for (String columnName : unmappedColumnNames) {
         String propertyName = columnName;
-        if (columnPrefix != null && !columnPrefix.isEmpty()) {
+        if (columnPrefix != null &&  !("".equals(columnPrefix)) ) {
           // When columnPrefix is specified,
           // ignore columns without the prefix.
           if (columnName.toUpperCase(Locale.ENGLISH).startsWith(columnPrefix)) {
@@ -927,7 +927,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       if (resultMapping.getNestedResultMapId() != null && resultMapping.getResultSet() == null) { // Issue #392
         final ResultMap nestedResultMap = configuration.getResultMap(resultMapping.getNestedResultMapId());
         createRowKeyForMappedProperties(nestedResultMap, rsw, cacheKey, nestedResultMap.getConstructorResultMappings(),
-            prependPrefix(resultMapping.getColumnPrefix(), columnPrefix));
+                prependPrefix(resultMapping.getColumnPrefix(), columnPrefix));
       } else if (resultMapping.getNestedQueryId() == null) {
         final String column = prependPrefix(resultMapping.getColumn(), columnPrefix);
         final TypeHandler<?> th = resultMapping.getTypeHandler();
