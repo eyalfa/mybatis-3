@@ -15,6 +15,8 @@
  */
 package org.apache.ibatis.executor.resultset;
 
+import java.util.*;
+
 import org.apache.ibatis.cache.CacheKey;
 import org.apache.ibatis.cursor.Cursor;
 import org.apache.ibatis.cursor.defaults.DefaultCursor;
@@ -97,12 +99,14 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   }
 
   private static class UnMappedColumAutoMapping {    
-    private final String column;   
+    private final String column;
+    private final int columnIdex;
     private final String property;    
     private final TypeHandler<?> typeHandler;
     private final boolean primitive;
-    public UnMappedColumAutoMapping(String column, String property, TypeHandler<?> typeHandler, boolean primitive) {
+    public UnMappedColumAutoMapping(String column, int columnIdex, String property, TypeHandler<?> typeHandler, boolean primitive) {
       this.column = column;
+      this.columnIdex = columnIdex;
       this.property = property;
       this.typeHandler = typeHandler;
       this.primitive = primitive;
@@ -453,9 +457,14 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     final String mapKey = getMapKey(resultMap, columnPrefix);
     List<UnMappedColumAutoMapping> autoMapping = autoMappingsCache.get(mapKey);
     if (autoMapping == null) {
+      final Map< String, Integer > columnIndeices = new HashMap<String, Integer>();
+      for( int i = 1, sz = rsw.getResultSet().getMetaData().getColumnCount(); i <= sz; ++i ){
+        final String colLable = rsw.getResultSet().getMetaData().getColumnLabel( i );
+        columnIndeices.put( colLable, i );
+      }
       autoMapping = new ArrayList<UnMappedColumAutoMapping>();
       final List<String> unmappedColumnNames = rsw.getUnmappedColumnNames(resultMap, columnPrefix);
-      for (String columnName : unmappedColumnNames) {
+      for (final String columnName : unmappedColumnNames) {
         String propertyName = columnName;
         if (columnPrefix != null && !columnPrefix.isEmpty()) {
           // When columnPrefix is specified,
@@ -471,11 +480,12 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           final Class<?> propertyType = metaObject.getSetterType(property);
           if (typeHandlerRegistry.hasTypeHandler(propertyType)) {
             final TypeHandler<?> typeHandler = rsw.getTypeHandler(propertyType, columnName);
-            autoMapping.add(new UnMappedColumAutoMapping(columnName, property, typeHandler, propertyType.isPrimitive()));
+            final int colIdx = columnIndeices.get( columnName );
+            autoMapping.add(new UnMappedColumAutoMapping(columnName, colIdx, property, typeHandler, propertyType.isPrimitive()));
           }
         }
       }
-      autoMappingsCache.put(mapKey, autoMapping);
+      autoMappingsCache.put(mapKey, Collections.unmodifiableList( autoMapping) );
     }
     return autoMapping;
   }
@@ -485,7 +495,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     boolean foundValues = false;
     if (autoMapping.size() > 0) {
       for (UnMappedColumAutoMapping mapping : autoMapping) {
-        final Object value = mapping.typeHandler.getResult(rsw.getResultSet(), mapping.column);
+        final Object value = mapping.typeHandler.getResult(rsw.getResultSet(), mapping.columnIdex);
         // issue #377, call setter on nulls
         if (value != null || configuration.isCallSettersOnNulls()) {
           if (value != null || !mapping.primitive) {
