@@ -273,7 +273,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
 
   public void handleRowValues(ResultSetWrapper rsw,
                               ResultMap resultMap,
-                              ResultHandler<?> resultHandler,
+                              ResultHandler resultHandler,
                               RowBounds rowBounds,
                               ResultMapping parentMapping) throws SQLException {
     if (resultMap.hasNestedResultMaps()) {
@@ -400,7 +400,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       Object propVal = getNestedQueryMappingValue(rsw.getResultSet(), metaObject, rm, lazyLoader, columnPrefix);
       if( null != propVal ) {
         foundValues = true;
-        if( (DEFERED != propVal)  &&
+        if( (NO_VALUE != propVal)  &&
                 ( null != rm.getProperty() )  &&
                 ( (null != propVal) || !metaObject.getGetterType(rm.getProperty()).isPrimitive() ) ){
           metaObject.setValue(rm.getProperty(), propVal);
@@ -939,12 +939,12 @@ public class DefaultResultSetHandler implements ResultSetHandler {
                                                  ResultMap resultMap,
                                                  String columnPrefix,
                                                  EnhancedResultMap enhancedResultMap,
-                                                 ResultHandler<?> resultHandler,
+                                                 ResultHandler resultHandler,
                                                  RowBounds rowBounds,
                                                  ResultMapping parentMapping) throws SQLException {
     //enhancedResultMap is a hint, if provided it must be correct
     assert( null == enhancedResultMap || ( enhancedResultMap.resultMap == resultMap && enhancedResultMap.columnPrefix == columnPrefix ) );
-    final DefaultResultContext<Object> resultContext = new DefaultResultContext<Object>();
+    final DefaultResultContext resultContext = new DefaultResultContext();
     skipRows(rsw.getResultSet(), rowBounds);
     Object rowValue = null;
     while (shouldProcessMoreRows(resultContext, rowBounds) && rsw.getResultSet().next()) {
@@ -1049,18 +1049,23 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         }
         if (ancestorObject != null) {
           if (newObject) {
-            linkObjects(metaObject, resultMapping, ancestorObject); // issue #385
+            if (newObject) metaObject.setValue(resultMapping.getProperty(), ancestorObject);
           }
         } else {
           rowKey = createRowKey(nestedResultMap, rsw, columnPrefix);
           final CacheKey combinedKey = combineKeys(rowKey, parentRowKey);
           Object rowValue = nestedResultObjects.get(combinedKey);
           boolean knownValue = (rowValue != null);
-          instantiateCollectionPropertyIfAppropriate(resultMapping, metaObject); // mandatory
+          final Object collectionProperty = instantiateCollectionPropertyIfAppropriate(resultMapping, metaObject); // mandatory
           if (anyNotNullColumnHasValue(resultMapping, columnPrefix, rsw.getResultSet())) {
             rowValue = getRowValue(rsw, nestedResultMap, columnPrefix, null, combinedKey, rowKey, rowValue);
             if (rowValue != null && !knownValue) {
-              linkObjects(metaObject, resultMapping, rowValue);
+              if (collectionProperty != null) {
+                final MetaObject targetMetaObject = configuration.newMetaObject(collectionProperty);
+                targetMetaObject.add(rowValue);
+              } else {
+                metaObject.setValue(resultMapping.getProperty(), rowValue);
+              }
               foundValues = true;
             }
           }
