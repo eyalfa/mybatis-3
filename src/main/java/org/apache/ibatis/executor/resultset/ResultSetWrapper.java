@@ -172,7 +172,7 @@ class ResultSetWrapper {
   }
 
   public int getColumnIndex( String columnName ) throws SQLException {
-    for( int n = 1, sz = resultSet.getMetaData().getColumnCount(); n <= sz ){
+    for( int n = 1, sz = resultSet.getMetaData().getColumnCount(); n <= sz; ++n ){
       String cn =  resultSet.getMetaData().getColumnLabel(n);
       if( cn.equals( columnName ) ) return n;
     }

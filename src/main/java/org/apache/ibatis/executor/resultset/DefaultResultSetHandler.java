@@ -270,11 +270,15 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   // HANDLE ROWS FOR SIMPLE RESULTMAP
   //
 
-  private void handleRowValues(ResultSetWrapper rsw, ResultMap resultMap, ResultHandler resultHandler, RowBounds rowBounds, ResultMapping parentMapping) throws SQLException {
+  public void handleRowValues(ResultSetWrapper rsw,
+                              ResultMap resultMap,
+                              ResultHandler<?> resultHandler,
+                              RowBounds rowBounds,
+                              ResultMapping parentMapping) throws SQLException {
     if (resultMap.hasNestedResultMaps()) {
       ensureNoRowBounds();
       checkResultHandler();
-      handleRowValuesForNestedResultMap(rsw, resultMap, resultHandler, rowBounds, parentMapping);
+      handleRowValuesForNestedResultMap(rsw, resultMap, null, null, resultHandler, rowBounds, parentMapping);
     } else {
       handleRowValuesForSimpleResultMap(rsw, resultMap, resultHandler, rowBounds, parentMapping);
     }
@@ -382,17 +386,18 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     for( ResultMapping dm : defferedMappings ){
       addPendingChildRelation(rsw.getResultSet(), metaObject, dm);
     }
-    return !defferedMappings.isEmpty()
+    return !defferedMappings.isEmpty();
   }
 
   private boolean applyNestedSelects(ResultSetWrapper rsw, List<ResultMapping> nestedSelects, MetaObject metaObject, ResultLoaderMap lazyLoader, String columnPrefix) throws SQLException {
     boolean foundValues = false;
     for( ResultMapping rm : nestedSelects){
       Object propVal = getNestedQueryMappingValue(rsw.getResultSet(), metaObject, rm, lazyLoader, columnPrefix);
-      if( null != propVal ){
+      if( null != propVal ) {
         foundValues = true;
-        if( ( null != rm.getProperty()) ||
-                (configuration.isCallSettersOnNulls() && !metaObject.getGetterType(rm.getProperty()).isPrimitive() ) ){
+        if( (DEFERED != propVal)  &&
+                ( null != rm.getProperty() )  &&
+                ( (null != propVal) || !metaObject.getGetterType(rm.getProperty()).isPrimitive() ) ){
           metaObject.setValue(rm.getProperty(), propVal);
         }
       }
@@ -482,13 +487,15 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         else{
           //direct
           String prefixedColumnName = null == columnPrefix ? resultMapping.getColumn() : columnPrefix + resultMapping.getColumn();
-          int n = rsw.getColumnIndex(prefixedColumnName);
+          int n = rsw.getColumnIndex(prefixedColumnName.toUpperCase(Locale.ENGLISH));
           if( -1 != n ){
+            boolean isPrimitive = null == resultMapping.getProperty() ? false : metaObject.getSetterType( resultMapping.getProperty() ).isPrimitive();
             UnMappedColumAutoMapping  colMapping = new UnMappedColumAutoMapping(prefixedColumnName,
                     n,
                     resultMapping.getProperty(),
                     resultMapping.getTypeHandler(),
-                    resultMapping.getJavaType().isPrimitive());
+                    //is this ok?
+                    isPrimitive);
             directMappings.add(colMapping);
           }
         }
@@ -860,12 +867,21 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   // HANDLE NESTED RESULT MAPS
   //
 
-  private void handleRowValuesForNestedResultMap(ResultSetWrapper rsw, EnhancedResultMap enhancedRresultMap, ResultHandler<?> resultHandler, RowBounds rowBounds, ResultMapping parentMapping) throws SQLException {
+  private void handleRowValuesForNestedResultMap(ResultSetWrapper rsw,
+                                                 ResultMap resultMap,
+                                                 String columnPrefix,
+                                                 EnhancedResultMap enhancedResultMap,
+                                                 ResultHandler<?> resultHandler,
+                                                 RowBounds rowBounds,
+                                                 ResultMapping parentMapping) throws SQLException {
+    //enhancedResultMap is a hint, if provided it must be correct
+    assert( null == enhancedResultMap || ( enhancedResultMap.resultMap == resultMap && enhancedResultMap.columnPrefix == columnPrefix ) );
     final DefaultResultContext<Object> resultContext = new DefaultResultContext<Object>();
     skipRows(rsw.getResultSet(), rowBounds);
     Object rowValue = null;
     while (shouldProcessMoreRows(resultContext, rowBounds) && rsw.getResultSet().next()) {
-      final ResultMap discriminatedResultMap = resolveDiscriminatedResultMap(rsw.getResultSet(), enhancedRresultMap.resultMap, null);
+      final ResultMap discriminatedResultMap = resolveDiscriminatedResultMap(rsw.getResultSet(), resultMap, null);
+      final EnhancedResultMap enhancedDiscriminatedResultMap = discriminatedResultMap == resultMap ? enhancedResultMap : null;
       final CacheKey rowKey = createRowKey(discriminatedResultMap, rsw, null);
       Object partialObject = nestedResultObjects.get(rowKey);
       if (mappedStatement.isResultOrdered()) { // issue #577 && #542
@@ -873,9 +889,9 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           nestedResultObjects.clear();
           storeObject(resultHandler, resultContext, rowValue, parentMapping, rsw.getResultSet());
         }
-        rowValue = getRowValue(rsw, discriminatedResultMap, rowKey, rowKey, null, partialObject);
+        rowValue = getRowValue(rsw, discriminatedResultMap, columnPrefix, enhancedDiscriminatedResultMap, rowKey, rowKey, partialObject);
       } else {
-        rowValue = getRowValue(rsw, discriminatedResultMap, rowKey, rowKey, null, partialObject);
+        rowValue = getRowValue(rsw, discriminatedResultMap, columnPrefix, enhancedDiscriminatedResultMap, rowKey, rowKey, partialObject);
         if (partialObject == null) {
           storeObject(resultHandler, resultContext, rowValue, parentMapping, rsw.getResultSet());
         }
@@ -890,14 +906,24 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   // GET VALUE FROM ROW FOR NESTED RESULT MAP
   //
 
-  private Object getRowValue(ResultSetWrapper rsw, EnhancedResultMap enhancedResultMap, CacheKey combinedKey, CacheKey absoluteKey, Object partialObject) throws SQLException {
-    final String columnPrefix = enhancedResultMap.columnPrefix;
-    final ResultMap resultMap = enhancedResultMap.resultMap;
+  private Object getRowValue(ResultSetWrapper rsw,
+                             ResultMap resultMap,
+                             String columnPrefix,
+                             EnhancedResultMap enhancedResultMap,
+                             CacheKey combinedKey,
+                             CacheKey absoluteKey,
+                             Object partialObject) throws SQLException {
+    //enhancedResultMap is a hint, if provided it must be correct
+    assert( null == enhancedResultMap || ( enhancedResultMap.resultMap == resultMap && enhancedResultMap.columnPrefix == columnPrefix ) );
+
     final String resultMapId = resultMap.getId();
     Object resultObject = partialObject;
     if (resultObject != null) {
       final MetaObject metaObject = configuration.newMetaObject(resultObject);
       putAncestor(absoluteKey, resultObject, resultMapId, columnPrefix);
+      if( null == enhancedResultMap ){
+        enhancedResultMap = getEnhancedResultMap( resultMap, columnPrefix, rsw, metaObject );
+      }
       applyNestedResultMappings(rsw, enhancedResultMap, metaObject, combinedKey, false);
       ancestorObjects.remove(absoluteKey);
     } else {
@@ -905,6 +931,9 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       resultObject = createResultObject(rsw, resultMap, lazyLoader, columnPrefix);
       if (resultObject != null && !typeHandlerRegistry.hasTypeHandler(resultMap.getType())) {
         final MetaObject metaObject = configuration.newMetaObject(resultObject);
+        if( null == enhancedResultMap ){
+          enhancedResultMap = getEnhancedResultMap( resultMap, columnPrefix, rsw, metaObject );
+        }
         boolean foundValues = !resultMap.getConstructorResultMappings().isEmpty();
 
         foundValues = applyPropertyMappings(rsw, enhancedResultMap, metaObject, lazyLoader) || foundValues;
@@ -937,14 +966,13 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   //
 
   private boolean applyNestedResultMappings(ResultSetWrapper rsw, EnhancedResultMap enhancedResultMap, MetaObject metaObject, CacheKey parentRowKey, boolean newObject) {
-    final String parentPrefix = enhancedResultMap.columnPrefix
+    final String parentPrefix = enhancedResultMap.columnPrefix;
     boolean foundValues = false;
     for (ResultMapping resultMapping : enhancedResultMap.nestedResultMappings ) {
       final String nestedResultMapId = resultMapping.getNestedResultMapId();
       try {
         final String columnPrefix = getColumnPrefix(parentPrefix, resultMapping);
         final ResultMap nestedResultMap = getNestedResultMap(rsw.getResultSet(), nestedResultMapId, columnPrefix);
-        final EnhancedResultMap nestedEnhancedResultMap = getEnhancedResultMap( nestedResultMap, columnPrefix, rsw, metaObject );
         CacheKey rowKey = null;
         Object ancestorObject = null;
         if (ancestorColumnPrefix.containsKey(nestedResultMapId)) {
@@ -962,7 +990,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           boolean knownValue = (rowValue != null);
           instantiateCollectionPropertyIfAppropriate(resultMapping, metaObject); // mandatory
           if (anyNotNullColumnHasValue(resultMapping, columnPrefix, rsw.getResultSet())) {
-            rowValue = getRowValue(rsw, nestedEnhancedResultMap, combinedKey, rowKey, columnPrefix, rowValue);
+            rowValue = getRowValue(rsw, nestedResultMap, columnPrefix, null, combinedKey, rowKey, rowValue);
             if (rowValue != null && !knownValue) {
               linkObjects(metaObject, resultMapping, rowValue);
               foundValues = true;
