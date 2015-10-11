@@ -351,7 +351,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       final EnhancedResultMap enhancedResultMap = getEnhancedResultMap(resultMap, null, rsw, metaObject );
       boolean foundValues = !resultMap.getConstructorResultMappings().isEmpty();
 
-      foundValues = applyPropertyMappings(rsw, enhancedResultMap, metaObject, lazyLoader) || foundValues;
+      foundValues = applyPropertyMappings(rsw, enhancedResultMap, metaObject, lazyLoader, false) || foundValues;
 
       /*if (shouldApplyAutomaticMappings(resultMap, false)) {
         foundValues = applyAutomaticMappings(rsw, resultMap, metaObject, null) || foundValues;
@@ -373,9 +373,13 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   // PROPERTY MAPPINGS
   //
 
-  private boolean applyPropertyMappings(ResultSetWrapper rsw, EnhancedResultMap enhancedResultMap, MetaObject metaObject, ResultLoaderMap lazyLoader)
+  private boolean applyPropertyMappings(ResultSetWrapper rsw,
+                                        EnhancedResultMap enhancedResultMap,
+                                        MetaObject metaObject,
+                                        ResultLoaderMap lazyLoader,
+                                        boolean nested)
           throws SQLException {
-    boolean foundValues = applyDirectMappings( rsw, enhancedResultMap.directMappings, metaObject, lazyLoader);
+    boolean foundValues = applyDirectMappings(rsw, enhancedResultMap.resolvedDirectMappings(nested), metaObject, lazyLoader);
     foundValues = applyNestedSelects( rsw, enhancedResultMap.nestedSelects, metaObject, lazyLoader, enhancedResultMap.columnPrefix) || foundValues;
     foundValues = addPendingChildRelations(rsw, enhancedResultMap.defferedMappings, metaObject, lazyLoader) || foundValues;
 
@@ -405,13 +409,26 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     return foundValues;
   }
 
-  private boolean applyDirectMappings(ResultSetWrapper rsw, List<UnMappedColumAutoMapping> directMappings, MetaObject metaObject, ResultLoaderMap lazyLoader) throws SQLException {
+  private boolean applyDirectMappings(ResultSetWrapper rsw,
+                                      final Iterator<UnMappedColumAutoMapping> directMappings,
+                                      MetaObject metaObject,
+                                      ResultLoaderMap lazyLoader) throws SQLException {
     boolean foundValues = false;
-    for( UnMappedColumAutoMapping dm : directMappings ){
+    final Iterable<UnMappedColumAutoMapping> directMappingsIterable = new Iterable<UnMappedColumAutoMapping>() {
+      boolean valid = true;
+
+      @Override
+      public Iterator<UnMappedColumAutoMapping> iterator() {
+        assert valid;
+        valid = false;
+        return directMappings;
+      }
+    };
+    for( UnMappedColumAutoMapping dm : directMappingsIterable ){
       Object propVal = dm.typeHandler.getResult(rsw.getResultSet(), dm.columnIdex);
-      if( null != propVal ){
-        foundValues = true;
-        if( ( null != dm.property) ||
+      foundValues |= ( null != propVal );
+      if( null != dm.property ){
+        if( ( null != propVal) ||
                 (configuration.isCallSettersOnNulls() && !dm.primitive) ){
           metaObject.setValue(dm.property, propVal);
         }
@@ -463,7 +480,9 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   private class EnhancedResultMap{
     final ResultMap resultMap;
     String  columnPrefix;
-    List<UnMappedColumAutoMapping>  directMappings = new ArrayList<UnMappedColumAutoMapping>();
+    private List<UnMappedColumAutoMapping>
+            directMappings = new ArrayList<UnMappedColumAutoMapping>(),
+            autoMappings;
     List<ResultMapping>
             nestedSelects = new ArrayList<ResultMapping>(),
             defferedMappings = new ArrayList<ResultMapping>(),
@@ -500,11 +519,53 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           }
         }
       }
-      directMappings.addAll(createAutomaticMappings(rsw, resultMap, metaObject, columnPrefix ));
+      if( Boolean.FALSE.equals( resultMap.getAutoMapping() ) ){
+        autoMappings = Collections.EMPTY_LIST;
+      } else {
+        autoMappings = createAutomaticMappings(rsw, resultMap, metaObject, columnPrefix );
+      }
       directMappings = Collections.unmodifiableList(directMappings);
       nestedSelects = Collections.unmodifiableList(nestedSelects);
       defferedMappings = Collections.unmodifiableList(defferedMappings);
       nestedResultMappings = Collections.unmodifiableList(nestedResultMappings);
+    }
+
+    Iterator<UnMappedColumAutoMapping> resolvedDirectMappings( boolean nested ) {
+      final Iterator<UnMappedColumAutoMapping> res1 = directMappings.iterator();
+      Iterator<UnMappedColumAutoMapping> res = res1;
+
+      if (!autoMappings.isEmpty() && shouldApplyAutomaticMappings(resultMap, nested)) {
+        if (!res1.hasNext()) {
+          res = autoMappings.iterator();
+        } else {
+          res = new Iterator<UnMappedColumAutoMapping>() {
+            Iterator<UnMappedColumAutoMapping> curr = res1, next = autoMappings.iterator();
+
+            @Override
+            public boolean hasNext() {
+              boolean ret = curr.hasNext();
+              if (!ret && null != next) {
+                curr = next;
+                next = null;
+                ret = curr.hasNext();
+              }
+              return ret;
+            }
+
+            @Override
+            public UnMappedColumAutoMapping next() {
+              return curr.next();
+            }
+
+            @Override
+            public void remove() {
+              //both underlying iterators are read-only
+              curr.remove();
+            }
+          };
+        }
+      }
+      return res;
     }
 
   }
@@ -564,7 +625,8 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           }
         }
       }
-      autoMappingsCache.put(mapKey, Collections.unmodifiableList( autoMapping) );
+      autoMapping = Collections.unmodifiableList( autoMapping);
+      autoMappingsCache.put(mapKey, autoMapping );
     }
     return autoMapping;
   }
@@ -936,7 +998,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         }
         boolean foundValues = !resultMap.getConstructorResultMappings().isEmpty();
 
-        foundValues = applyPropertyMappings(rsw, enhancedResultMap, metaObject, lazyLoader) || foundValues;
+        foundValues = applyPropertyMappings(rsw, enhancedResultMap, metaObject, lazyLoader, true) || foundValues;
 
         /*if (shouldApplyAutomaticMappings(resultMap, true)) {
           foundValues = applyAutomaticMappings(rsw, resultMap, metaObject, columnPrefix) || foundValues;
