@@ -92,6 +92,7 @@ public class DefaultResultSetHandlerTest {
     when(rs.getType()).thenReturn(ResultSet.TYPE_FORWARD_ONLY);
     when(rs.next()).thenReturn(true).thenReturn(false);
     when(rs.getInt("CoLuMn1")).thenReturn(100);
+    when(rs.getInt(1)).thenReturn(100);
     when(rs.wasNull()).thenReturn(false);
     when(rsmd.getColumnCount()).thenReturn(1);
     when(rsmd.getColumnLabel(1)).thenReturn("CoLuMn1");
