@@ -175,11 +175,16 @@ public class ResultSetWrapper {
   }
 
   public int getColumnIndex( String columnName ) throws SQLException {
+    int insensitiveIdx = -1;
     for( int n = 1, sz = resultSet.getMetaData().getColumnCount(); n <= sz; ++n ){
       String cn =  resultSet.getMetaData().getColumnLabel(n);
       if( cn.equals( columnName ) ) return n;
+      if( cn.equalsIgnoreCase(columnName)){
+        if( -1 == insensitiveIdx ){
+          insensitiveIdx = n;
+        }
+      }
     }
-    return -1;
+    return insensitiveIdx;
   }
-  
 }
