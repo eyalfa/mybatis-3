@@ -475,7 +475,19 @@ public class DefaultResultSetHandler implements ResultSetHandler {
             continue;
           }
         }
-        final String property = metaObject.findProperty(propertyName, configuration.isMapUnderscoreToCamelCase());
+        String property = metaObject.findProperty(propertyName, configuration.isMapUnderscoreToCamelCase());
+        if( null != property ){
+          //skip already mapped properties.
+          //this might still not be enough as some properties may have been mapped by the constructor mappings which are unnamed and sometimes impossible to determine (property assignment may be based on multiple constructor arguments...
+          for( ResultMapping mappedProp : resultMap.getPropertyResultMappings()) {
+            if( property.equals( mappedProp.getProperty() )){
+              //property is already map, do not automap it
+              property = null;
+              break;
+            }
+          }
+        }
+
         if (property != null && metaObject.hasSetter(property)) {
           final Class<?> propertyType = metaObject.getSetterType(property);
           if (typeHandlerRegistry.hasTypeHandler(propertyType)) {
