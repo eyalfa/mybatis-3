@@ -75,24 +75,25 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   private final Map<String, ResultMapping> nextResultMaps = new HashMap<String, ResultMapping>();
   private final Map<CacheKey, List<PendingRelation>> pendingRelations = new HashMap<CacheKey, List<PendingRelation>>();
   // Cached Automappings
-  private final Map<String, List<UnMappedColumAutoMapping>> autoMappingsCache = new HashMap<String, List<UnMappedColumAutoMapping>>();
+  private final Map<String, List<DirectColumnMapping>> autoMappingsCache = new HashMap<String, List<DirectColumnMapping>>();
   
   private static class PendingRelation {
     public MetaObject metaObject;
     public ResultMapping propertyMapping;
   }
-  private static class UnMappedColumAutoMapping {    
+  private static class DirectColumnMapping {
     private final String column;
     private final int columnIdex;
     private final String property;    
     private final TypeHandler<?> typeHandler;
-    private final boolean primitive;
-    public UnMappedColumAutoMapping(String column, int columnIdex, String property, TypeHandler<?> typeHandler, boolean primitive) {
+    private final boolean primitive, automatic;
+    public DirectColumnMapping(String column, int columnIdex, String property, TypeHandler<?> typeHandler, boolean primitive, boolean automatic) {
       this.column = column;
       this.columnIdex = columnIdex;
       this.property = property;
       this.typeHandler = typeHandler;
       this.primitive = primitive;
+      this.automatic = automatic;
     }
   }  
   
@@ -410,23 +411,27 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   }
 
   private boolean applyDirectMappings(ResultSetWrapper rsw,
-                                      final Iterator<UnMappedColumAutoMapping> directMappings,
+                                      final Iterator<DirectColumnMapping> directMappings,
                                       MetaObject metaObject,
                                       ResultLoaderMap lazyLoader) throws SQLException {
     boolean foundValues = false;
-    final Iterable<UnMappedColumAutoMapping> directMappingsIterable = new Iterable<UnMappedColumAutoMapping>() {
+    final Iterable<DirectColumnMapping> directMappingsIterable = new Iterable<DirectColumnMapping>() {
       boolean valid = true;
 
       @Override
-      public Iterator<UnMappedColumAutoMapping> iterator() {
+      public Iterator<DirectColumnMapping> iterator() {
         assert valid;
         valid = false;
         return directMappings;
       }
     };
-    for( UnMappedColumAutoMapping dm : directMappingsIterable ){
+    for( DirectColumnMapping dm : directMappingsIterable ){
       Object propVal = dm.typeHandler.getResult(rsw.getResultSet(), dm.columnIdex);
       foundValues |= ( null != propVal );
+      //for some reason auto-mappings and explicit mappings behave differently on this aspect, a null automaped property may still get the current object to be considered populated while explicit mapped field wont.
+      //I thought this was a bug, but there's an explicit test for this at org.apache.ibatis.submitted.call_setters_on_nulls.CallSettersOnNullsTest.shouldCallNullOnMapForSingleColumnWithResultMap()
+      //so the code was adjusted to maintain the existing behavior
+      foundValues |= dm.automatic && configuration.isCallSettersOnNulls();
       if( null != dm.property ){
         if( ( null != propVal) ||
                 (configuration.isCallSettersOnNulls() && !dm.primitive) ){
@@ -480,8 +485,8 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   private class EnhancedResultMap{
     final ResultMap resultMap;
     String  columnPrefix;
-    private List<UnMappedColumAutoMapping>
-            directMappings = new ArrayList<UnMappedColumAutoMapping>(),
+    private List<DirectColumnMapping>
+            directMappings = new ArrayList<DirectColumnMapping>(),
             autoMappings;
     List<ResultMapping>
             nestedSelects = new ArrayList<ResultMapping>(),
@@ -509,12 +514,13 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           int n = rsw.getColumnIndex(prefixedColumnName);
           if( -1 != n ){
             boolean isPrimitive = null == resultMapping.getProperty() ? false : metaObject.getSetterType( resultMapping.getProperty() ).isPrimitive();
-            UnMappedColumAutoMapping  colMapping = new UnMappedColumAutoMapping(prefixedColumnName,
+            DirectColumnMapping colMapping = new DirectColumnMapping(prefixedColumnName,
                     n,
                     resultMapping.getProperty(),
                     resultMapping.getTypeHandler(),
                     //is this ok?
-                    isPrimitive);
+                    isPrimitive,
+                    false /*not automatic*/);
             directMappings.add(colMapping);
           }
         }
@@ -530,16 +536,16 @@ public class DefaultResultSetHandler implements ResultSetHandler {
       nestedResultMappings = Collections.unmodifiableList(nestedResultMappings);
     }
 
-    Iterator<UnMappedColumAutoMapping> resolvedDirectMappings( boolean nested ) {
-      final Iterator<UnMappedColumAutoMapping> res1 = directMappings.iterator();
-      Iterator<UnMappedColumAutoMapping> res = res1;
+    Iterator<DirectColumnMapping> resolvedDirectMappings( boolean nested ) {
+      final Iterator<DirectColumnMapping> res1 = directMappings.iterator();
+      Iterator<DirectColumnMapping> res = res1;
 
       if (!autoMappings.isEmpty() && shouldApplyAutomaticMappings(resultMap, nested)) {
         if (!res1.hasNext()) {
           res = autoMappings.iterator();
         } else {
-          res = new Iterator<UnMappedColumAutoMapping>() {
-            Iterator<UnMappedColumAutoMapping> curr = res1, next = autoMappings.iterator();
+          res = new Iterator<DirectColumnMapping>() {
+            Iterator<DirectColumnMapping> curr = res1, next = autoMappings.iterator();
 
             @Override
             public boolean hasNext() {
@@ -553,7 +559,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
             }
 
             @Override
-            public UnMappedColumAutoMapping next() {
+            public DirectColumnMapping next() {
               return curr.next();
             }
 
@@ -581,16 +587,16 @@ public class DefaultResultSetHandler implements ResultSetHandler {
     return res;
   }
 
-  private List<UnMappedColumAutoMapping> createAutomaticMappings(ResultSetWrapper rsw, ResultMap resultMap, MetaObject metaObject, String columnPrefix) throws SQLException {
+  private List<DirectColumnMapping> createAutomaticMappings(ResultSetWrapper rsw, ResultMap resultMap, MetaObject metaObject, String columnPrefix) throws SQLException {
     final String mapKey = getMapKey(resultMap, columnPrefix);
-    List<UnMappedColumAutoMapping> autoMapping = autoMappingsCache.get(mapKey);
+    List<DirectColumnMapping> autoMapping = autoMappingsCache.get(mapKey);
     if (autoMapping == null) {
       final Map< String, Integer > columnIndeices = new HashMap<String, Integer>();
       for( int i = 1, sz = rsw.getResultSet().getMetaData().getColumnCount(); i <= sz; ++i ){
         final String colLable = rsw.getResultSet().getMetaData().getColumnLabel( i );
         columnIndeices.put( colLable, i );
       }
-      autoMapping = new ArrayList<UnMappedColumAutoMapping>();
+      autoMapping = new ArrayList<DirectColumnMapping>();
       final List<String> unmappedColumnNames = rsw.getUnmappedColumnNames(resultMap, columnPrefix);
       for (final String columnName : unmappedColumnNames) {
         String propertyName = columnName;
@@ -621,7 +627,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
           if (typeHandlerRegistry.hasTypeHandler(propertyType)) {
             final TypeHandler<?> typeHandler = rsw.getTypeHandler(propertyType, columnName);
             final int colIdx = columnIndeices.get( columnName );
-            autoMapping.add(new UnMappedColumAutoMapping(columnName, colIdx, property, typeHandler, propertyType.isPrimitive()));
+            autoMapping.add(new DirectColumnMapping(columnName, colIdx, property, typeHandler, propertyType.isPrimitive(), true /*automatic*/));
           }
         }
       }
@@ -632,10 +638,10 @@ public class DefaultResultSetHandler implements ResultSetHandler {
   }
   
   private boolean applyAutomaticMappings(ResultSetWrapper rsw, ResultMap resultMap, MetaObject metaObject, String columnPrefix) throws SQLException {
-    List<UnMappedColumAutoMapping> autoMapping = createAutomaticMappings(rsw, resultMap, metaObject, columnPrefix);
+    List<DirectColumnMapping> autoMapping = createAutomaticMappings(rsw, resultMap, metaObject, columnPrefix);
     boolean foundValues = false;
     if (autoMapping.size() > 0) {
-      for (UnMappedColumAutoMapping mapping : autoMapping) {
+      for (DirectColumnMapping mapping : autoMapping) {
         final Object value = mapping.typeHandler.getResult(rsw.getResultSet(), mapping.columnIdex);
         // issue #377, call setter on nulls
         if (value != null || configuration.isCallSettersOnNulls()) {
