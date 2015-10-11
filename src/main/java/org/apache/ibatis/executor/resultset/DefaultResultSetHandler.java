@@ -487,7 +487,7 @@ public class DefaultResultSetHandler implements ResultSetHandler {
         else{
           //direct
           String prefixedColumnName = null == columnPrefix ? resultMapping.getColumn() : columnPrefix + resultMapping.getColumn();
-          int n = rsw.getColumnIndex(prefixedColumnName.toUpperCase(Locale.ENGLISH));
+          int n = rsw.getColumnIndex(prefixedColumnName);
           if( -1 != n ){
             boolean isPrimitive = null == resultMapping.getProperty() ? false : metaObject.getSetterType( resultMapping.getProperty() ).isPrimitive();
             UnMappedColumAutoMapping  colMapping = new UnMappedColumAutoMapping(prefixedColumnName,
